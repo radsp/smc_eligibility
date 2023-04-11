@@ -16,7 +16,8 @@ if (!require("pacman")) install.packages("pacman")
 # library(civis)
 # library(bslib)
 
-pacman::p_load(shiny, shinyWidgets, leaflet, sf, tidyverse, civis, leafpop, ggplot2, ggthemes, shinycssloaders)
+pacman::p_load(shiny, shinyWidgets, leaflet, sf, tidyverse, civis, 
+               leafpop, ggplot2, ggthemes, shinycssloaders, htmlwidgets, DT)
 
 # library(shiny)
 # library(shinyWidgets)
@@ -53,32 +54,72 @@ ui <- fluidPage(
     )
   ),
   
-
-  fluidRow(style = "margin-top:30px;",
-    column(width = 3,
-      pickerInput(
-        inputId = "in_adm0", label = ("Select Country"), 
-        choices = cc_list, selected = c("Senegal", "Mali", "Guinea"),
-        options = list('actions-box' = T),
-        multiple = T
-      )
-    ),
-    column(width = 4,
-      radioGroupButtons(
-        inputId = "in_thresh", label = ("Cutoff"),
-        choices = c("50%", "55%", "60%", "65%", "70%"),
-        selected = "60%"
-      )
-    ),
-    column(width = 3, style = "margin-top:20px;",
-      actionButton(
-        inputId = "update", label = ("Update plots"),
-        class = "btn-primary"
+  fluidRow(style = "margin-top:40px; margin-left:10px;margin-right:10px;",
+    wellPanel(
+      fluidRow(
+        column(width = 2,
+          selectInput(
+            inputId = "in_adm0", label = ("Country"),
+            choices = cc_list,# selected = c("Senegal"),
+            # options = list('actions-box' = T),
+            multiple = F
+          )
+        ),
+        column(width = 2,
+               selectInput(
+                 inputId = "in_indi", label = ("Indicator"),
+                 choices = cc_indi,# selected = c("Senegal"),
+                 # options = list('actions-box' = T),
+                 multiple = F
+               )
+        ),
+        column(width = 3,
+               radioGroupButtons(
+                 inputId = "in_thresh", label = ("Cutoff"),
+                 choices = c("50%", "55%", "60%", "65%", "70%"),
+                 selected = "60%"
+               )
+        ),
+        column(width = 2, style = "margin-top:20px;",
+               actionButton(
+                 inputId = "update", label = ("Update plots"),
+                 class = "btn-primary"
+               )
+        )
       )
     )
   ),
   
-  fluidRow(style = "margin-top:40px;",
+
+
+
+  # fluidRow(style = "margin-top:30px;",
+  #   column(width = 3,
+  #     selectInput(
+  #       inputId = "in_adm0", label = ("Country"), 
+  #       choices = cc_list,# selected = c("Senegal"),
+  #       # options = list('actions-box' = T),
+  #       multiple = F
+  #     )
+  #   ),
+  #   column(width = 4,
+  #     radioGroupButtons(
+  #       inputId = "in_thresh", label = ("Cutoff"),
+  #       choices = c("50%", "55%", "60%", "65%", "70%"),
+  #       selected = "60%"
+  #     )
+  #   ),
+  #   column(width = 3, style = "margin-top:20px;",
+  #     actionButton(
+  #       inputId = "update", label = ("Update plots"),
+  #       class = "btn-primary"
+  #     )
+  #   )
+  # ),
+  
+  # fluidRow(textOutput(outputId = "mytext")),
+  
+  fluidRow(style = "margin-top:20px;",
     column(width = 6,
       withSpinner(leafletOutput("map", height = "67vh"))
     ),
@@ -92,6 +133,11 @@ ui <- fluidPage(
          tabPanel(style = "overflow-y:scroll;", # max-height: 67vh",
            "Ineligible Areas",
            withSpinner(plotOutput("plot_ineligible"))
+         ),
+         tabPanel(style = "height:55vh;",
+            "Table",
+            dataTableOutput("table")
+           
          )
        )
     )
@@ -106,8 +152,19 @@ server <- function(input, output, session){
   
   
   xmain <- eventReactive(input$update, {
-    get_data_main(ctry = input$in_adm0, cutoff = input$in_thresh)
+    get_data_main(ctry = input$in_adm0, var = input$in_indi, cutoff = input$in_thresh)
     }, ignoreNULL = F)
+  
+  # output$mytext <- renderText({
+  #   myx <- xmain()
+  #   unique(myx$xin$variable)
+  # })
+  
+  x4tab <- eventReactive(input$update, {
+    
+    get_data_table(ctry = input$in_adm0, var = input$in_indi, cutoff = input$in_thresh)
+      
+  }, ignoreNULL = F)
   
   
   
@@ -117,17 +174,22 @@ server <- function(input, output, session){
     
     leg <- paste0("SMC Eligibility<br>(", sdat$cutoff, " cutoff)")
     
-    leaflet(sdat$s2in) %>%
+    leaflet(options = leafletOptions(zoomControl = FALSE)) %>%
       addProviderTiles("CartoDB.Positron") %>%
-      addPolygons(color = "black", weight = 0.4, fillColor = ~ clr_smc(smc_in),
-                  popup = ~popup_txt) %>%
-      addLegend("bottomright", pal = clr_smc, values = ~ smc_in, title = leg)
+      addPolygons(data = sdat$s2in, color = "black", weight = 0.4, fillColor = ~ clr_smc(smc_in),
+                  fillOpacity = 0.7, popup = ~popup_txt) %>%
+      addLegend(data = sdat$s2in,"bottomright", opacity = 0.7,
+                pal = clr_smc, values = ~ smc_in, title = leg) %>%
+      onRender(
+        "function(el, x) {
+          L.control.zoom({position:'bottomleft'}).addTo(this);
+        }")
   })
   
   
   ncol_eligible <- eventReactive(input$update, {
     xdat <- xmain() 
-    xdat <- xdat$xin %>% filter(smc_in == "Eligible")
+    xdat <- xdat$xin %>% filter(smc_in %in% c("Eligible", "Eligible + 10%"))
     
     narea <- length(unique(xdat$area))
     
@@ -164,16 +226,18 @@ server <- function(input, output, session){
   output$plot_eligible <- renderPlot({
     
     xdat <- xmain() 
-    xdat <- xdat$xin %>% filter(smc_in == "Eligible")
+    xdat <- xdat$xin %>% filter(smc_in %in% c("Eligible", "Eligible + 10%"))
     
     narea <- length(unique(xdat$area))
     
     if(length(narea) == 0) {
-      gout <- ggplot() + theme_void() + 
-        geom_text(aes(0, 0, label = "Data unavailable"))
+      # gout <- ggplot() + theme_void() + 
+      #   geom_text(aes(0, 0, label = "Data unavailable"))
+      gout <- ggplot(dummy_data, aes(x = x, y = y)) + geom_point() +
+        facet_wrap(~ group, ncol = 2)
     } else {
       ncolfacet <- ceiling(narea / 4)
-      gout <- ggplot(xdat, aes(x = date, y = confirmed_cases)) +
+      gout <- ggplot(xdat, aes(x = date, y = value)) +
         geom_line() + geom_point() +
         facet_wrap(~ area, scales = "free", ncol = 4) +
         theme_minimal() +
@@ -199,11 +263,13 @@ server <- function(input, output, session){
     narea <- length(unique(xdat$area))
     
     if(length(narea) == 0) {
-      gout <- ggplot() + theme_void() + 
-        geom_text(aes(0, 0, label = "Data unavailable"))
+      # gout <- ggplot() + theme_void() + 
+      #   geom_text(aes(0, 0, label = "Data unavailable"))
+      gout <- ggplot(dummy_data, aes(x = x, y = y)) + geom_point() +
+        facet_wrap(~ group, ncol = 2)
     } else {
       ncolfacet <- ceiling(narea / 4)
-      gout <- ggplot(xdat, aes(x = date, y = confirmed_cases)) +
+      gout <- ggplot(xdat, aes(x = date, y = value)) +
         geom_line() + geom_point() +
         facet_wrap(~ area, scales = "free", ncol = 4) +
         theme_minimal() +
@@ -217,6 +283,15 @@ server <- function(input, output, session){
     
     
   }, height = function(){150*ncol_ineligible()})
+  
+  
+  output$table <- renderDataTable({
+    xdat <- x4tab() 
+    datatable(xdat, rownames = F,
+              options = list(paging = FALSE, scrollX = T, scrollY="50vh",
+                             searching = F)) %>%
+      formatStyle(names(xdat$xin), lineHeight = '70%', "white-space"="nowrap")
+  })
   
   
 }

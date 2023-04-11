@@ -3,12 +3,13 @@ x0 <- read_civis('staging_pmihq.smc_eligibility_data') %>%
   mutate(date = as.Date(as.character(date))) %>%
   mutate(area = paste0(country, "/",admin_level_1, "/\n", admin_level_2)) 
 
-
+x0 <- x0 %>%
+  mutate(across(starts_with("smc"), ~ gsub("Eligible\\+", "Eligible + 10%", .)))
 
 # list of countries that are smc-eligible at different cutoffs
-csmc <- x0 %>% select(geo_id, starts_with("smc")) %>% distinct() 
+# csmc <- x0 %>% select(geo_id, starts_with("smc")) %>% distinct() 
   
-
+xtxt <- read_civis('staging_pmihq.smc_eligibility_data_txt')
 
 # Shapefiles -------------------------------------------------------------------
 
@@ -73,19 +74,25 @@ s0_ctr <- st_point_on_surface(s0$geometry) %>% st_geometry() %>% st_coordinates(
 s0$lat_ctr <- s0_ctr[,"Y"]
 s0$lon_ctr <- s0_ctr[,"X"]
 
-s2_map <- merge(s2, csmc , by = "geo_id", all.x = TRUE, all.y = FALSE) %>%
-  mutate(across((starts_with("smc")), ~ case_when(is.na(.) ~ "Insufficient Data",
-                                               TRUE ~ .))) %>%
-  mutate(across(c(starts_with("smc")), 
-                ~ factor(., levels = c("Eligible", "Not Eligible", "Insufficient Data")))) %>%
-  filter(!is.na(geo_id)) %>%
-  mutate(popup_txt = paste0("Country: <b>", country, "</b><br>Admin 1: <b>", admin1,
-                            "</b><br>Admin2: <b>", admin2, "</b>"))
+# s2_map <- merge(s2, csmc , by = "geo_id", all.x = TRUE, all.y = TRUE) %>%
+#   mutate(across((starts_with("smc")), ~ case_when(is.na(.) ~ "Insufficient Data",
+#                                                TRUE ~ .))) %>%
+#   mutate(across(c(starts_with("smc")), 
+#                 ~ factor(., levels = c("Eligible", "Eligible + 10%", "Not Eligible",
+#                                        "Annual cases <= 250", "Insufficient Data")))) %>%
+#   filter(!is.na(geo_id)) %>%
+#   mutate(popup_txt = paste0("Country: <b>", country, "</b><br>Admin 1: <b>", admin1,
+#                             "</b><br>Admin2: <b>", admin2, "</b>"))
 
 
-s2_gid <- st_drop_geometry(s2_map) %>% pull(geo_id)
+# s2_gid <- st_drop_geometry(s2_map) %>% pull(geo_id)
 
-cc_list <- sort(unique(s0$country))
+cc_list <- sort(unique(s0$country)) 
+cc_list <- cc_list[!cc_list %in% c("Cambodia", "Ethiopia", "Myanmar", "Tanzania (Mainland)", "Tanzania (Zanzibar)", "Thailand")]
+
+cc_indi <- c("Confirmed cases" = "confirmed_cases", 
+             "Suspected cases" = "suspected_cases",
+             "Rainfall" = "rf")
 
 # gglist <- NULL
 # for(i in 1:length(s2_gid)) {
@@ -107,8 +114,8 @@ cc_list <- sort(unique(s0$country))
 # }
 
 
-clr_smc <- colorFactor(c("green", "purple", "grey"), 
-                       levels = c("Eligible", "Not Eligible", "Insufficient Data"))
+clr_smc <- colorFactor(c("#228833", "#66CCEE", "#EE6677", "#AA3377", "#BBBBBB"), 
+                       levels = c("Eligible", "Eligible + 10%", "Not Eligible", "Annual cases <= 250", "Insufficient Data"))
 
 
 
@@ -121,15 +128,48 @@ clr_smc <- colorFactor(c("green", "purple", "grey"),
  
 
 
-get_data_main <- function(ctry, cutoff) {
+get_data_main <- function(ctry, var, cutoff) {
   
   var_cutoff <- gsub("%", "", paste0("smc_", cutoff))
   
-  xin <- x0 %>% filter(country %in% ctry) %>%
+  xin <- x0 %>% filter( (country %in% ctry) & (variable %in% var) ) %>%
     rename(smc_in = var_cutoff)
-  s2in <- s2_map %>% filter(country %in% ctry) %>%
-    rename(smc_in = var_cutoff)
+  
+  xtmp <- xin %>% select(geo_id, smc_in) %>% distinct()
+  
+  s2in <- s2 %>% filter(country %in% ctry) %>%
+    merge(., xtmp, by = "geo_id") %>%
+    mutate(across((starts_with("smc")), ~ case_when(is.na(.) ~ "Insufficient Data",
+                                                    TRUE ~ .))) %>%
+    mutate(across(c(starts_with("smc")), 
+                  ~ factor(., levels = c("Eligible", "Eligible + 10%", "Not Eligible",
+                                         "Annual cases <= 250", "Insufficient Data")))) %>%
+    filter(!is.na(geo_id)) %>%
+    mutate(popup_txt = paste0("Country: <b>", country, "</b><br>Admin 1: <b>", admin1,
+                              "</b><br>Admin2: <b>", admin2, "</b>")) %>%
+    mutate(smc_in = replace(smc_in, is.na(smc_in), "Insufficient Data"))
+  
+  
+  # s2in <- s2_map %>% filter( (country %in% ctry) & (variable %in% var)) %>%
+  #   rename(smc_in = var_cutoff) %>%
+  #   mutate(smc_in = replace(smc_in, is.na(smc_in), "Insufficient Data"))
   s1in <- s1 %>% filter(country %in% ctry)
   
   y <- list(xin = xin, s2in = s2in, s1in = s1in, cutoff = cutoff)
 }
+
+
+
+get_data_table <- function(ctry, var, cutoff) {
+  
+  ct <- as.integer(gsub("%", "", cutoff))
+  
+  out <- xtxt %>% filter( (country %in% ctry) & (variable == var) & (cutoff == ct) ) %>%
+    filter(cutoff == ct) %>%  select(-c(country, variable, cutoff)) %>%
+    rename("Admin Level 2" = "admin_level_2", "Admin Level 1" = "admin_level_1",
+           "Total Annual" = "total", "# Of Eligible Period" = "n", "Eligible Period" = "txt")
+    (out)
+}
+
+
+dummy_data <- data.frame(x = c(0,0), y = c(0,0), group = c("a", "b"))
